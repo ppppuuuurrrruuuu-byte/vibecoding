@@ -136,11 +136,24 @@
     color: var(--done);
     text-decoration: line-through;
   }
-  li .del {
+  li .del, li .edit {
     background: transparent;
     color: var(--sub);
     padding: 4px 8px;
     font-size: 16px;
+  }
+  li .edit {
+    font-size: 15px;
+  }
+  li .edit-input {
+    flex: 1;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--accent);
+    background: var(--card);
+    color: var(--text);
+    font-size: 15px;
+    outline: none;
   }
   .empty {
     text-align: center;
@@ -173,9 +186,11 @@
   <div class="footer" id="counter"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabaseClient.js"></script>
 <script>
-const STORAGE_KEY = 'vibecoding_todos';
-let todos = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+const db = window.supabaseClient;
+let todos = [];
 let filter = 'all';
 
 const listEl = document.getElementById('list');
@@ -183,9 +198,20 @@ const inputEl = document.getElementById('todoInput');
 const emptyMsg = document.getElementById('emptyMsg');
 const counter = document.getElementById('counter');
 
-function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+async function loadTodos() {
+  const { data, error } = await db
+    .from('todos')
+    .select('*')
+    .order('created_at', { ascending: true });
+  if (error) {
+    console.error(error);
+    return;
+  }
+  todos = data;
+  render();
 }
+
+let editingId = null;
 
 function render() {
   listEl.innerHTML = '';
@@ -202,21 +228,65 @@ function render() {
     const check = document.createElement('div');
     check.className = 'check';
     check.textContent = todo.done ? '✓' : '';
-    check.onclick = () => { todo.done = !todo.done; save(); render(); };
+    check.onclick = () => toggleDone(todo);
+    li.appendChild(check);
+
+    if (todo.id === editingId) {
+      const editInput = document.createElement('input');
+      editInput.type = 'text';
+      editInput.className = 'edit-input';
+      editInput.value = todo.text;
+      editInput.maxLength = 200;
+
+      let settled = false;
+      const commit = () => {
+        if (settled) return;
+        settled = true;
+        const newText = editInput.value.trim();
+        editingId = null;
+        if (newText && newText !== todo.text) {
+          updateText(todo, newText);
+        } else {
+          render();
+        }
+      };
+      const cancel = () => {
+        if (settled) return;
+        settled = true;
+        editingId = null;
+        render();
+      };
+      editInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') cancel();
+      });
+      editInput.addEventListener('blur', commit);
+
+      li.appendChild(editInput);
+      listEl.appendChild(li);
+      editInput.focus();
+      editInput.select();
+      return;
+    }
 
     const span = document.createElement('span');
     span.className = 'text';
     span.textContent = todo.text;
-    span.onclick = () => { todo.done = !todo.done; save(); render(); };
+    span.onclick = () => toggleDone(todo);
+    li.appendChild(span);
+
+    const edit = document.createElement('button');
+    edit.className = 'edit';
+    edit.textContent = '✎';
+    edit.onclick = () => { editingId = todo.id; render(); };
+    li.appendChild(edit);
 
     const del = document.createElement('button');
     del.className = 'del';
     del.textContent = '✕';
-    del.onclick = () => { todos = todos.filter(t => t.id !== todo.id); save(); render(); };
-
-    li.appendChild(check);
-    li.appendChild(span);
+    del.onclick = () => deleteTodo(todo);
     li.appendChild(del);
+
     listEl.appendChild(li);
   });
 
@@ -225,13 +295,31 @@ function render() {
   counter.textContent = todos.length ? `총 ${todos.length}개 · 완료 ${doneCount}개` : '';
 }
 
-function addTodo() {
+async function addTodo() {
   const text = inputEl.value.trim();
   if (!text) return;
-  todos.push({ id: Date.now(), text, done: false });
   inputEl.value = '';
-  save();
-  render();
+  const { error } = await db.from('todos').insert({ text });
+  if (error) { console.error(error); return; }
+  loadTodos();
+}
+
+async function toggleDone(todo) {
+  const { error } = await db.from('todos').update({ done: !todo.done }).eq('id', todo.id);
+  if (error) { console.error(error); return; }
+  loadTodos();
+}
+
+async function deleteTodo(todo) {
+  const { error } = await db.from('todos').delete().eq('id', todo.id);
+  if (error) { console.error(error); return; }
+  loadTodos();
+}
+
+async function updateText(todo, newText) {
+  const { error } = await db.from('todos').update({ text: newText }).eq('id', todo.id);
+  if (error) { console.error(error); return; }
+  loadTodos();
 }
 
 document.getElementById('addBtn').onclick = addTodo;
@@ -248,7 +336,7 @@ document.querySelectorAll('.filters button').forEach(btn => {
   };
 });
 
-render();
+loadTodos();
 </script>
 </body>
 </html>
